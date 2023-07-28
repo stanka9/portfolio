@@ -1,0 +1,3 @@
+This repository contains the code for Exercise 5 of the Image Extrapolation Challenge 2021. The task is to design and train a neural network that can extrapolate unknown border pixels of grayscale images.
+
+The main task is to create a machine learning model that can predict or extrapolate the unknown border pixels of an image, where unknown pixels have been set to zero. The images to be used for training are grayscale and have a certain amount of pixels at the borders that are unknown.

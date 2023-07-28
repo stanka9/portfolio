@@ -1,0 +1,924 @@
+---
+title: "Game of Thrones Season 7 and Season 8 analysis"
+author: "Stanislava Poizlova"
+date: "23/12/2022"
+output: html_document
+header-includes:
+    - \usepackage{sectsty}
+    - \allsectionsfont{\color{green}}
+---
+Assigned networks: Season 7 and Season 8 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(igraph)
+library(glue)
+library(ggplot2)
+library(neo4r)
+source(file.path("nc-neo4j-util.R"))
+```
+
+## Season 7 (igraph)
+### Loading data
+```{r}
+fp_vertices <- file.path(getwd(), "data", "got-season-7-nodes.csv")
+fp_edgelist <- file.path(getwd(), "data", "got-season-7-edges.csv")
+```
+Loading data by the use of readr package, that is also a part of the core tidyverse.
+```{r}
+(tbl_vertices7 <- read_csv(fp_vertices))
+```
+
+```{r}
+(tbl_edges7 <- read_csv(fp_edgelist))
+```
+Now I will create an iGraph object from the edge list and a list of vertices. As stated in the lesson, we should assume that our graph is unweighted, due to graph comparison. Therefore, I right away eliminate the weight column from the edge list and create unweighted igraph object. We can be sure that the distances and not weights are used in the further analysis. 
+```{r}
+g_df7 <- igraph::graph_from_data_frame(
+  d = tbl_edges7[,c(1,2,4)],
+  directed = FALSE,
+  vertices = tbl_vertices7
+)
+```
+
+```{r}
+#just to check, in order to take this into account for calculations
+igraph::is_connected(g_df7, mode = c("strong")) 
+#graph is connected
+
+#check is we have some loops, not expected as we talk about social network
+which_multiple(g_df7)
+```
+
+## **a) number of edges, number of vertices, graph density**
+```{r}
+g_df7
+```
+The first part of igraph object **UN** denotes that the graph is **U**ndirected with **N**amed vertices. In case, we would not eliminate the weights the **UNW** would be shown, where **W** would stand for weighted. No additional graph characteristics are indicated. From the network perspective the weight probably implied the number of interactions, thus worked as replacement for multiedges. The graph is undirected, possible because the exchange of information/interaction run both ways. 
+In case, we would like to depict how many times each character spoke to the other one and the direction of this interaction, it would be meaningful to use directed graph. However, here we are probably solely interested in any type of interaction, what is also very common approach for social networks.
+**Name** and **Label** are vertex attributes of character type, where Label is the name of the character. The **Season** is a node attribute of a numeric type representing the season number, weight would be edge attribute as well, representing the number of interactions between characters. 
+```{r}
+#number of vertices
+#(igraph::V(g_df7))
+glue('The igraph object has {igraph::gorder(g_df7)} vertices.')
+
+#number of edges 
+#(igraph::E(g_df7))
+glue('The igraph object has {igraph::gsize(g_df7)} edges')
+
+
+#graph density, no loops detected
+glue('The igraph object has edge density of {igraph::edge_density(g_df7, loops = FALSE)}.')
+```
+```{r}
+#to check the maximum possible number of edges in our graph (|V|*(|V|-1))/2
+((igraph::gorder(g_df7))*(igraph::gorder(g_df7)-1))/2
+```
+From the above representation and also the specific functions used we know that the graph has:
+
+* **81** vertices. This represents also the order of the graph. It is the number of characters we have in this network/season.
+* **412** edges. This represents also the size of the graph. It is the number of interactions of characters, specifically, with which characters did the specific character occurred in a scene with during this season. There is no information about how many times this occured, as we eliminated weights.
+* **Density** of a graph is 0.12716049382716 indicating that the graph is not complete (would be 1). Moreover, we can see that the graph is not dense. This is logical, as the serie takes place at multiple locations at the time, so many characters do not even meet during the whole period of the season. However, there is also a lot of movement of particular characters during season what might further identify them as hubs, as they interact with the highest number of other characters.
+
+
+
+## **b) degree distribution: maximum degree, minimum degree, avg. degree, degree variance**
+I will use a function degree and then create a df, such that the function sapply with all needed measures can be easily applied. As the graph is undirected we do not have to specify additional arguments about incoming/outgoing edges.
+
+#### Absolute
+```{r}
+degrees_df<-as.data.frame(igraph::degree(g_df7))
+colnames(degrees_df)<-c("degree")
+degrees_df
+```
+```{r}
+#checking if the sum of degree is equal to twice number of edges
+sum(degrees_df$degree)
+```
+
+##### Min, max, mean, median, sd, var
+```{r}
+sapply(degrees_df, function(x) c(min = min(x), max = max(x), avg = mean(x), median = median(x), sd = sd(x), var = var(x)))
+```
+```{r}
+summary(degrees_df$degree)
+```
+
+```{r}
+#character with the highest degree (degree=43) -> only one
+degrees_df %>% slice_max(degree)
+```
+```{r}
+#characters with the top 10 highest degree (returns 11 due to equality)
+degrees_df %>% top_n(10) %>% arrange(desc(degree))
+```
+```{r}
+#characters with the lowest degree (degree = 1)
+degrees_df %>% slice_min(degree)
+```
+```{r}
+ggplot(degrees_df, aes(x=degree)) +
+  geom_histogram(aes(y = (..count..)),boundary = 0, bins = 10, color = "#000555", fill = "#50AD83") +
+  geom_vline(aes(xintercept = mean(degree)), color = "#000000", size = 1.25) +
+  geom_vline(aes(xintercept = mean(degree) + sd(degree)), color = "#000000", size = 1, linetype = "dashed") +
+  geom_vline(aes(xintercept = mean(degree) - sd(degree)), color = "#000000", size = 1, linetype = "dashed") +
+  #geom_density(color = "#000000", fill = "#FF9B92",  alpha = 0.6) +
+  labs(
+    x = "Degrees",
+    y = "Count"
+  )
+
+ggplot(degrees_df, aes(x=degree)) +
+  geom_histogram(aes(y = (..density..)),boundary = 0, bins = 10, color = "#000555", fill = "#50AD83") +
+  geom_vline(aes(xintercept = mean(degree)), color = "#000000", size = 1.25) +
+  geom_vline(aes(xintercept = mean(degree) + sd(degree)), color = "#000000", size = 1, linetype = "dashed") +
+  geom_vline(aes(xintercept = mean(degree) - sd(degree)), color = "#000000", size = 1, linetype = "dashed") +
+  geom_density(color = "#000000", fill = "#FF9B92",  alpha = 0.6) +
+  labs(
+    x = "Degrees",
+    y = "Density"
+  )
+
+
+```
+```{r}
+plot(igraph::degree_distribution(g_df7), pch=19, cex=1, col="orange", xaxt="n", xlab="Degree", ylab="Relative Frequency of the degree distribution",cex.lab = 0.5,cex.axis = 0.5,cex.main = 0.5,cex.sub = 0.5)
+lines(igraph::degree_distribution(g_df7), col="green")
+axis(1,at =1:58, labels = 0:57, cex.axis=0.5)
+```
+
+* **Min** degree is 1. There are multiple character, 11, that during the whole season interacted with only 1 other character. We cannot say whether they appeared in multiple scenes with the same character or the scene occured only once, as we eliminated weights. 
+* **Max** degree is 43 and only one character JON is associated with it. 
+* **Std** and **Variance** is 9.2 and 85.0. This shows that our data are rather spread out from the mean and not collected around it. What could mean, also based on the graph, that we have high number of vertices with low degree and low number of vertices with high degree. In addition, based on a paper cited below, the (normalised) degree variance is an important metric for characterizing network degree heterogeneity, that might proved useful for comparison.
+* **Mean** and **Median** is 7 and 10.17, what means that on average each character is adjacent to 7 other characters, meaning that on average each character interacts during the show with 9 other characters. However, we can see that the median is higher than the mean, meaning that we have a lot of characters pushing the average down with a lower degree. Also based on the graph we can see that the distribution is skewed to the right with the heavy tail, with 1st IQR is 1 and 3rd IQR is 16. Meaning that 75% of characters have a degree lower than 16. 
+
+* In general, we can see that when we filter the characters with the 10 highest degrees we do not really have a big gaps in between (except the first one as also seen on the graph). However based on the knowledge of my serie and the location of 3rd IQR I would say that JON, DAENERYS, TYRION, CERSEI are possible hubs. In other words, all characters with degree higher than 30. Additionally, from the relative frequency plot we can see that no vertices have degree 0 and the highest amount of vertices has degree 1 and 2.
+
+Smith, K.M., Escudero, J. Normalised degree variance. Appl Netw Sci 5, 32 (2020). https://doi.org/10.1007/s41109-020-00273-3
+
+#### Normalized
+I will conduct the same analysis as above for the normalized degree distribution, however, will be used only for the graph comparisons.
+```{r}
+degrees_df<-as.data.frame(igraph::degree(g_df7, normalized = TRUE))
+colnames(degrees_df)<-c("degree")
+degrees_df
+```
+```{r}
+sapply(degrees_df, function(x) c(min = min(x), max = max(x), avg = mean(x), median = median(x), sd = sd(x), var = var(x) ))
+```
+```{r}
+summary(degrees_df$degree)
+```
+
+```{r}
+#character with the highest degree (degree=43)
+degrees_df %>% slice_max(degree)
+```
+```{r}
+#characters with the top 10 highest degree (returns 11 due to equality)
+degrees_df %>% top_n(10) %>% arrange(desc(degree))
+```
+
+```{r}
+#characters with the lowest degree (degree = 1)
+degrees_df %>% slice_min(degree)
+```
+
+* **Normalized_min** is 0.0125
+* **Normalized_max** is 0.5375
+* **Normalized_mean** is 0.127
+* **Normalized_median** is 0.0875
+* **Normalized_sd** is 0.115
+* **Normalized_var** is 0.0132
+
+
+## **c) centrality: closeness, betweenness**
+#### Closeness
+```{r}
+#closeness
+closeness_df <-as.data.frame(igraph::closeness(g_df7)) # weight parameter is not needed as we imported graph as unweighted
+colnames(closeness_df)<-c("closeness")
+closeness_df
+summary(closeness_df$closeness)
+```
+```{r}
+sapply(closeness_df, function(x) c(min = min(x), max = max(x), avg = mean(x), median = median(x), sd = sd(x), var = var(x)))
+closeness_df%>% slice_max(closeness)
+closeness_df %>% top_n(10) %>% arrange(desc(closeness))
+closeness_df%>% slice_min(closeness)
+closeness_df %>%  arrange(desc(closeness)) %>% slice_tail(n = 10)
+```
+Closeness represents how fast a character can get on average to all other characters based on the shortest possible path. Thus, the characters in our network that have a lot of direct connections to many vertices are the best adepts for the highest closeness measure (as its inverse  of its farness), meaning that they are connected through the least amount of steps to all other vertices. We can see that the potential hubs (JON, DAENERYS, TYRION, CERSEI) are the ones with the highest closeness measure. 
+In general:
+
+* **Min_closeness** is 0.003436426	for HOWLAND what shows that this characters is placed the most far away from all the other characters, as the sum of all shortest paths is big. 
+* **Max_closeness**  is 0.008264463	for JON, meaning that the JON has the closest shortest distance on average to all other vertices.
+* **Mean_closeness** is 0.005452095. From this we might read that characters in general are not closely connected/linked to each other. Also, median is close to the mean. In connection to previous section, we might conclude that as a lot of characters have a low degree in a network the sum of all shortest geodesic paths is thus longer.
+
+In case of disconnected graph the min_closeness would be infinity and we would need to use harmonic closeness for future analysis.
+
+#### Normalized Closeness
+As in before section I also compute normalized closeness.
+```{r}
+#closeness
+closeness_df <-as.data.frame(igraph::closeness(g_df7,weights = NULL, normalized = TRUE))
+colnames(closeness_df)<-c("closeness")
+closeness_df
+```
+```{r}
+sapply(closeness_df, function(x) c(min = min(x), max = max(x), avg = mean(x), median = median(x), sd = sd(x), var = var(x)))
+closeness_df%>% slice_max(closeness_df)
+closeness_df %>% top_n(10) %>% arrange(desc(closeness))
+closeness_df%>% slice_min(closeness_df)
+closeness_df %>%  arrange(desc(closeness)) %>% slice_tail(n = 10)
+```
+#### Normalized Harmonic Closeness
+I also compute harmonic closeness, as the graph in Season 8 is disconnected. I opted out to only calculate the normalized type, as it is better from graph comparisons. 
+```{r}
+closeness_df <-as.data.frame(igraph::harmonic_centrality(g_df7,weights = NULL, normalized = TRUE)) 
+colnames(closeness_df)<-c("closeness")
+closeness_df
+```
+```{r}
+sapply(closeness_df, function(x) c(min = min(x), max = max(x), avg = mean(x), median = median(x), sd = sd(x), var = var(x)))
+closeness_df%>% slice_max(closeness)
+closeness_df %>% top_n(10) %>% arrange(desc(closeness))
+closeness_df%>% slice_min(closeness)
+```
+#### Betweenness
+Betweennes measures the number of geodesic paths that pass through the vertex v (vertex betweenness) or edge e (edge betweenness).
+
+##### Vertex betweenness
+```{r}
+vertex_betweenness <- as.data.frame(igraph::betweenness(g_df7))
+colnames(vertex_betweenness)<-c("vertex_betweenness")
+vertex_betweenness
+```
+```{r}
+sapply(vertex_betweenness, function(x) c(min = min(x), max = max(x), avg = mean(x), median = median(x), sd = sd(x), var = var(x)))
+vertex_betweenness%>% slice_max(vertex_betweenness)
+vertex_betweenness%>% slice_min(vertex_betweenness)
+vertex_betweenness%>% slice_max(vertex_betweenness)
+vertex_betweenness %>% top_n(10) %>% arrange(desc(vertex_betweenness))
+vertex_betweenness%>% slice_min(vertex_betweenness)
+```
+```{r}
+#all shortest paths - 3160
+((igraph::gorder(g_df7)-1)*(igraph::gorder(g_df7)-2))/2
+```
+
+* **Max_betweenness** is 750.0652	and is attributed to JON. As JON is the character with the highest degree and also the highest closeness, this conclusion seems logical. Thus the JON is in the center of graph and has the biggest influence on information delivery, in other words if you would like to send a letter to someone in this season fast, give it to JON.
+* **Min_betweenness** is 0 and is attributed to multiple characters. This means that no shortest path passes through them. If we look fastly over the list, these are mostly the characters that have degree 1,leaf nodes.
+* **Mean_betweenness** is 54.8 and **Median_betweenness** is 3.7 what is a very big difference. This indicates that we have a few vertices with very high betweenness and many vertices with very low one. Specifically 50% of our data have betweenness below 3.7, meaning that half of our data does not have more than 3.7 paths going through it.
+
+
+#### Normalized Vertex betweenness
+Also computing the same measures for normalized vertex betweenness.
+```{r}
+vertex_betweenness <- as.data.frame(igraph::betweenness(g_df7, normalized=TRUE))
+colnames(vertex_betweenness)<-c("vertex_betweenness")
+vertex_betweenness
+```
+```{r}
+sapply(vertex_betweenness, function(x) c(min = min(x), max = max(x), avg = mean(x), median = median(x), sd = sd(x), var = var(x)))
+vertex_betweenness%>% slice_max(vertex_betweenness)
+vertex_betweenness%>% slice_min(vertex_betweenness)
+vertex_betweenness%>% slice_max(vertex_betweenness)
+vertex_betweenness %>% top_n(10) %>% arrange(desc(vertex_betweenness))
+vertex_betweenness%>% slice_min(vertex_betweenness)
+```
+
+#### Edge betweenness
+I was also interested to look at edge betweenness, as it might provide some overview about the edge connecting two main communities in the Game of Thrones serie. In our case after some manual looking at edges the edge connecting communities is the one conencting vertices JON -- SAM. In season 7, the SAM is majority of the time in lubrary and part of night watch. On the other hand JON is connected to DANAERYS that plans the attack on the main capital. Therefore, I believe this edge connects the main story of JON and DANAERYS to the story of SAM, night watch and other smaller characters. But I have to say this finding was rather suprising, but I do not remember the serie that much :) 
+```{r}
+igraph::edge_betweenness(g_df7)
+```
+
+```{r}
+edge_betweenness <- as.data.frame(igraph::edge_betweenness(g_df7))
+colnames(edge_betweenness)<-c("edge_betweenness")
+edge_betweenness
+```
+```{r}
+sapply(edge_betweenness, function(x) c(min = min(x), max = max(x), avg = mean(x), median = median(x), sd = sd(x), var = var(x)))
+edge_betweenness%>% slice_max(edge_betweenness)
+edge_betweenness%>% slice_min(edge_betweenness)
+```
+
+```{r}
+#the neighbourhood of the vertices
+igraph::ego(
+  g_df7,
+  order = 1,
+  nodes = "SAM"
+)
+
+```
+```{r}
+igraph::ego(
+  g_df7,
+  order = 1,
+  nodes = "JON"
+)
+```
+## **d) all-pairs shortest paths (distances), diameter, and average distance**
+The shortest path is the smallest geodesic distance between vertex v1 and vertex v2. Specifically, we can say for this social network that it represents the closest connection between any two characters in a seson.
+
+#### All-pairs shortest paths (distances)
+```{r}
+distMatrix <- igraph::shortest.paths(g_df7)
+#distMatrix
+```
+I would like to check the shortest paths for the specific characters, for vertices with high and low degree.
+```{r}
+distancej <- igraph::distances(g_df7, v="JON")
+distancej
+distanced <- igraph::distances(g_df7, v="DAENERYS")
+distanced
+distancet <- igraph::distances(g_df7, v="TYRION")
+distancet
+# low degree
+distanceh <- igraph::distances(g_df7, v="HOWLAND")
+distanceh
+distancev <- igraph::distances(g_df7, v="VISERYS")
+distancev
+```
+When we look at vertices with high degree the longest shortest path is 3, but I would say that around 90% of shortest paths here have length 1 or 2. On the other hand, when we look at characters with degree 1, the majority of the shortest paths has length 3 or 4. 
+
+#### Diameter (longest geodesic path)
+The diameter is also the longest geodesic path, therefore it is the maximum value from the above computed matrix. On the other hand, the radius is the minimum geodesic path. 
+```{r}
+#diameter
+max(igraph::eccentricity(g_df7))
+max(distMatrix)
+igraph::diameter(g_df7, directed = FALSE)
+```
+```{r}
+#radius - we cannot take min(distMatrix, as the diagonal is 0, due to no self loops - thus using eccentricity instead)
+min(igraph::eccentricity(g_df7))
+igraph::radius(g_df7)
+```
+
+#### Average distance (average path length)
+```{r}
+igraph::average.path.length(g_df7)
+```
+* **Diameter** of the graph or the biggest geodesic distance out of all paths, or the biggest eccentricity is 5. This is the longest geodesic distance between two characters in this season.
+* **Radius** is 3. And this is the minimum from all the longest geodesic paths of all vertices. In other words, each vertex in the graph has the maximum shortest path out of all paths equal to at least 3.
+* **Average distance** or average path length is 2.37. It means that on average 2.37 steps along the shortest paths have to be made to reach other vertices/characters.
+
+## **e) edge connectivity, vertex connectivity**
+
+#### Edge connectivity
+```{r}
+igraph::edge_connectivity(g_df7)
+#bridges - their removal would increase the number of connected components in the graph
+igraph::bridges(g_df7)
+```
+```{r}
+igraph::is.connected(g_df7 - path("BENJEN", "JON"))
+igraph::is.connected(g_df7 - path("DAENERYS", "VISERYS"))
+igraph::is.connected(g_df7 - path("ARYA", "WALDER"))
+```
+```{r}
+igraph::edge_connectivity(g_df7, source="JON", target="DAENERYS")
+#JON and DANAERYS are in my opinion the main characters of this season, what also indicates their connectivity.
+```
+
+* **Edge connectivity** is 1, meaning that the graph is 1-edge-connected and that when one edge is removed it is enough for the graph to become disconnected. The named edges are the bridges - removal of any of them would result in disconnected graph. From the serie perspective, the bridges are the interactions that join the whole plot and season together. They join the smaller scenes with the bigger ones. In case, we would delete this bridge and have disconnected graphs we would have a season with more parallel plots that never cross each other. 
+
+
+#### Vertex connectivity
+```{r}
+igraph::vertex_connectivity(g_df7)
+#vertices which removal would increase the number of connected components in the graph
+igraph::articulation_points(g_df7)
+```
+* **Vertex connectivity** is 1, meaning that the graph is 1-vertex-connected and that when one of vertices is removed it is enough for the graph to become disconnected. The articulation points and cut vertices are the vertices that join the communities together. In the GOT serie we could theoretically look at them as on the main characters of their smaller "plots" through which the smaller plots mean and result in the main story. 
+
+#Season 8 (neo4j)
+
+#### Preparation steps
+
+Creating connection and checking if it works. 
+```{r}
+con <- neo4j_api$new(
+  url = "http://localhost:7474", 
+  user = "neo4j", 
+  password = "plop",
+  db = "asgmt2")
+con$ping()
+```
+
+Clean the database.
+```{r}
+
+deleteAll <- function() {
+  return("MATCH (n) DETACH DELETE n;")
+}
+
+deleteGds <- function() {
+  return("CALL gds.graph.list() 
+          YIELD graphName
+          CALL gds.graph.drop(graphName)
+          YIELD database
+          RETURN 'dropped ' + graphName + ' in ' + database")
+}
+deleteAll() %>%
+  call_neo4j(con)
+```
+Loading the vertices and edges and creating df, and checking if read correctly.
+```{r}
+fp_vertices8 <- file.path(getwd(), "data", "got-season-8-nodes.csv")
+fp_edgelist8 <- file.path(getwd(), "data", "got-season-8-edges.csv")
+df_vertices8 <- read_csv(fp_vertices8);
+head(df_vertices8)
+```
+Checking if it works.
+```{r}
+(result <- sprintf('LOAD CSV WITH HEADERS FROM "file:///%s" AS line RETURN count(line) as nlines', URLencode(fp_vertices8)) %>%
+    call_neo4j(con))
+```
+
+```{r}
+nrow(df_vertices8) == result$nlines$value
+```
+Adding vertices.
+```{r}
+(tbl_df <- sprintf('LOAD CSV WITH HEADERS FROM "file:///%s" AS line
+                  MERGE (:Character {characterId: line.Id, name: line.Label})
+', fp_vertices8) %>%
+    call_neo4j(con,))
+```
+Loading edge list.
+```{r}
+df_edgelist8 <- read.csv(fp_edgelist8);
+head(df_edgelist8)
+```
+
+```{r}
+(result <- sprintf('LOAD CSV WITH HEADERS FROM "file:///%s" AS line
+                    RETURN count(line) as nlines', fp_edgelist8) %>%
+    call_neo4j(con))
+```
+```{r}
+nrow(df_edgelist8) == result$nlines$value
+```
+Importing relationships using query into Neo4j, without weights.
+```{r}
+(tbl_df <- sprintf('LOAD CSV WITH HEADERS FROM "file:///%s" AS line
+                  MATCH (src:Character {characterId:line.Source})
+                  MATCH (tgt:Character {characterId:line.Target})
+                  MERGE (src)-[:interactsWith]->(tgt)', fp_edgelist8) %>%
+    call_neo4j(con))
+```
+```{r}
+#'CALL gds.graph.drop("asgmt2_season8_directed")' %>% call_neo4j(con)
+#'CALL gds.graph.drop("asgmt2_season8_undirected")' %>% call_neo4j(con)
+```
+Creating undirected gds representation.
+```{r}
+'CALL gds.graph.project("asgmt2_season8_undirected", "Character", {interactsWith: {orientation: "UNDIRECTED"}})' %>% call_neo4j(con)
+```
+
+
+## **a) number of edges, number of vertices, graph density**
+```{r}
+knitr::include_graphics("C:/Users/stank/Desktop/graph1.png")
+```
+Number of Vertices, edges
+```{r}
+#node count - vertices; relationship count- edges*2
+'CALL gds.graph.list("asgmt2_season8_undirected") YIELD
+  nodeCount,relationshipCount'%>% call_neo4j(con)
+```
+
+Graph Density
+```{r}
+'CALL gds.graph.list("asgmt2_season8_undirected") YIELD density'%>% call_neo4j(con)
+```
+Based on the previous parts we get:
+
+* **74** vertices. This represents also the order of the graph. It is the number of characters we have in this network/season.
+* **1106** relationships -> **553** edges. This represents also the size of the graph. It is the number of interactions of characters, specifically, with which characters did the specific character occurred in a scene with during this season. There is no information about how many times this occurred, as we eliminated weights.
+* **Density** of a graph is 0.204739	indicating that the graph is not complete (would be 1). Moreover, we can see that the graph is rather sparse.
+
+From the picture and specifications we can also say that the graph is undirected, disconnected (2 vertices connected only to each other at the top part of the graph). These two characters died in the Season 7, thus probably some recap/part of new story is shared during this season. Additionally, as for previous graph there are no multiedges nor self-loops.
+
+## **b) degree distribution: maximum degree, minimum degree, avg. degree, degree variance**
+
+#### Absolute
+```{r}
+'CALL gds.graph.list("asgmt2_season8_undirected") YIELD
+ degreeDistribution '%>% call_neo4j(con)
+```
+
+Max degree
+```{r}
+#max degree
+degs_max <- 'CALL gds.degree.stream("asgmt2_season8_undirected")
+        YIELD nodeId, score
+        MATCH (n:Character) WHERE id(n) = nodeId
+        RETURN n.name AS name, score AS degree
+        ORDER BY degree DESC' %>%
+  call_neo4j(con, output="r")
+degs_max <- degs_max %>% bind_cols() %>% setNames(names(degs_max))
+degs_max
+
+```
+
+
+```{r}
+#top 10 with max degree
+degs_max10 <- 'CALL gds.degree.stream("asgmt2_season8_undirected")
+        YIELD nodeId, score
+        MATCH (n:Character) WHERE id(n) = nodeId
+        RETURN n.name AS name, score AS degree
+        ORDER BY degree DESC
+        LIMIT 10' %>%
+  call_neo4j(con, output="r")
+degs_max10 <- degs_max10 %>% bind_cols() %>% setNames(names(degs_max))
+degs_max10
+
+```
+Min degree
+```{r}
+degs_min <- 'CALL gds.degree.stream("asgmt2_season8_undirected")
+        YIELD nodeId, score
+        MATCH (n:Character) WHERE id(n) = nodeId
+        RETURN n.name AS name, score AS degree
+        ORDER BY degree ASC
+        LIMIT 1' %>%
+  call_neo4j(con, output="r")
+degs_min <- degs_min %>% bind_cols() %>% setNames(names(degs_min))
+degs_min
+```
+```{r}
+#last 10 - all with degreee 1
+degs_min10 <- 'CALL gds.degree.stream("asgmt2_season8_undirected")
+        YIELD nodeId, score
+        MATCH (n:Character) WHERE id(n) = nodeId
+        RETURN n.name AS name, score AS degree
+        ORDER BY degree ASC
+        LIMIT 10' %>%
+  call_neo4j(con, output="r")
+degs_min10 <- degs_min10 %>% bind_cols() %>% setNames(names(degs_min))
+degs_min10
+```
+Mean
+```{r}
+degs_average <- 'CALL gds.degree.stream("asgmt2_season8_undirected")
+        YIELD nodeId, score
+        MATCH (n:Character) WHERE id(n) = nodeId
+        RETURN avg(score) AS degree' %>%
+  call_neo4j(con, output="r")
+degs_average
+
+```
+Median
+```{r}
+degs_all <- 'CALL gds.degree.stream("asgmt2_season8_undirected")
+        YIELD nodeId, score
+        MATCH (n:Character) WHERE id(n) = nodeId
+        RETURN score AS degree' %>%
+  call_neo4j(con, output="r")
+median(degs_all$degree$value)
+```
+Standard deviation
+```{r}
+degs_std <- 'CALL gds.degree.stream("asgmt2_season8_undirected")
+        YIELD nodeId, score
+        MATCH (n:Character) WHERE id(n) = nodeId
+        RETURN (stDev(score)) AS degree' %>%
+  call_neo4j(con, output="r")
+degs_std
+
+```
+
+Variance
+```{r}
+degs_var <- 'CALL gds.degree.stream("asgmt2_season8_undirected")
+        YIELD nodeId, score
+        MATCH (n:Character) WHERE id(n) = nodeId
+        RETURN (stDev(score))^2 AS degree' %>%
+  call_neo4j(con, output="r")
+degs_var
+```
+```{r}
+degrees8 <- as.data.frame(degs_all$degree)
+colnames(degrees8)<-c("degree")
+
+ggplot(degrees8, aes(x=degree)) +
+  geom_histogram(aes(y = (..count..)),boundary = 0, bins = 10, color = "#000555", fill = "#50AD83") +
+  geom_vline(aes(xintercept = mean(degree)), color = "#000000", size = 1.25) +
+  geom_vline(aes(xintercept = mean(degree) + sd(degree)), color = "#000000", size = 1, linetype = "dashed") +
+  geom_vline(aes(xintercept = mean(degree) - sd(degree)), color = "#000000", size = 1, linetype = "dashed") +
+  labs(x ="Degrees", y ="Count")
+
+ggplot(degrees8, aes(x=degree)) +
+  geom_histogram(aes(y = (..density..)),boundary = 0, bins = 10, color = "#000555", fill = "#50AD83") +
+  geom_vline(aes(xintercept = mean(degree)), color = "#000000", size = 1.25) +
+  geom_vline(aes(xintercept = mean(degree) + sd(degree)), color = "#000000", size = 1, linetype = "dashed") +
+  geom_vline(aes(xintercept = mean(degree) - sd(degree)), color = "#000000", size = 1, linetype = "dashed") +
+  geom_density(color = "#000000", fill = "#FF9B92",  alpha = 0.6) +
+  labs(x = "Degrees",y = "Density")
+
+```
+
+* **Min** degree is 1. There are multiple character, 10, that during the whole season interacted with only 1 other character. We cannot say whether they appeared in multiple scenes with the same character or the scene occured only once, as we eliminated weights. 
+* **Max** degree is 42 and only one character SAM is associated with it. 
+* **Std** and **Variance** is 13.012 and 169.3121. This shows that our data are rather spread out from the mean and not collected around it. We again have high number of vertices with low degree and low number of vertices with high degree. We can again see that the distribution is skewed to right, however, does not really have such a heavytail as before, as more characters than before have a high degree.
+* **Mean** and **Median** is 14.95 and 11, what means that on average each character is adjacent to 15 other characters, meaning that on average each character interacts during the show with 15 other characters. However, we can see that the median is lower than the mean, meaning that we have a lot of characters pushing the average up with a high degree.
+
+* In general, we can see that when we filter the characters with the 10 highest degrees we do not really have a big gaps in between . However based on the knowledge of my serie and the location of 3rd IQR is also pretty high. I would say that SAM is for sure the hub, but also DAENERYS, TYRION, and ARYA should be considered.
+
+### Normalized
+I will again conduct the same analysis for the normalized degree distribution.
+```{r}
+degs_all<- "CALL gds.degree.stream('asgmt2_season8_undirected')
+        YIELD nodeId, score
+        MATCH (n:Character) WHERE id(n) = nodeId
+        RETURN n.name AS name, score AS degree
+        ORDER BY degree" %>%
+  call_neo4j(con, output="r")
+degs_all <- degs_all %>% bind_cols() %>% setNames(names(degs_all))
+order8 <-'CALL gds.graph.list("asgmt2_season8_undirected") YIELD
+  nodeCount,relationshipCount'%>% call_neo4j(con)
+
+#max
+max(degs_all$degree/(as.double(order8$nodeCount)-1))
+#min
+min(degs_all$degree/(as.double(order8$nodeCount)-1))
+#average
+mean(degs_all$degree/(as.double(order8$nodeCount)-1))
+#median
+median(degs_all$degree/(as.double(order8$nodeCount)-1))
+#sd
+sd(degs_all$degree/(as.double(order8$nodeCount)-1))
+#var
+var(degs_all$degree/(as.double(order8$nodeCount)-1))
+
+```
+* **Normalized_max** is 0.5753425
+* **Normalized_min** is 0.01369863
+* **Normalized_mean** is 0.204739
+* **Normalized_median** is 0.1506849
+* **Normalized_sd** 0.1782466
+* **Normalized_var** 0.03177183
+
+
+## **c) centrality: closeness, betweenness**
+### Closeness
+```{r}
+#closeness
+clos <- 'CALL gds.beta.closeness.stream("asgmt2_season8_undirected")
+         YIELD nodeId, score
+         MATCH (n:Character) WHERE id(n) = nodeId
+         RETURN n.name AS name, score AS closeness
+         ORDER BY closeness DESC' %>%
+  call_neo4j(con, output="r")
+
+(clos <- clos %>% bind_cols() %>% setNames(names(clos)))
+```
+```{r}
+min(clos$closeness)
+max(clos$closeness)
+mean(clos$closeness)
+median(clos$closeness)
+sd(clos$closeness)
+var(clos$closeness)
+
+```
+
+#### Normalized closeness using Wasserman Faust for disconnected graphs
+```{r}
+clos_norm <- 'CALL gds.beta.closeness.stream("asgmt2_season8_undirected", {
+           useWassermanFaust: true
+         })
+         YIELD nodeId, score
+         MATCH (n:Character) WHERE id(n) = nodeId
+         RETURN n.name AS name, score AS closeness
+         ORDER BY closeness DESC' %>%
+  call_neo4j(con, output="r")
+
+(clos_norm <- clos_norm %>% bind_cols() %>% setNames(names(clos_norm)))
+```
+```{r}
+min(clos_norm$closeness)
+max(clos_norm$closeness)
+mean(clos_norm$closeness)
+median(clos_norm$closeness)
+sd(clos_norm$closeness)
+var(clos_norm$closeness)
+```
+#### (Normalized) Harmonic closeness
+```{r}
+clos_normharm <- 'CALL gds.alpha.closeness.harmonic.stream("asgmt2_season8_undirected")
+          YIELD nodeId, centrality
+          MATCH (n:Character) WHERE id(n) = nodeId
+          RETURN n.name AS name, centrality AS closeness
+          ORDER BY closeness DESC' %>%
+  call_neo4j(con, output="r")
+
+(clos_normharm <- clos_normharm %>% bind_cols() %>% setNames(names(clos_normharm)))
+```
+```{r}
+min(clos_normharm$closeness)
+max(clos_normharm$closeness)
+mean(clos_normharm$closeness)
+median(clos_normharm$closeness)
+sd(clos_normharm$closeness)
+var(clos_normharm$closeness)
+```
+
+### Betweenness
+
+##### Vertex betweenness
+```{r}
+betweenness8 <- 'CALL gds.betweenness.stream("asgmt2_season8_undirected")
+        YIELD nodeId, score
+        MATCH (n:Character) WHERE id(n) = nodeId
+        RETURN n.name AS name, score AS betweeness
+        ORDER BY betweeness DESC' %>%
+  call_neo4j(con, output="r")
+(betweenness8 <- betweenness8 %>% bind_cols() %>% setNames(names(betweenness8)))
+
+```
+
+```{r}
+min(betweenness8$betweeness)
+max(betweenness8$betweeness)
+mean(betweenness8$betweeness)
+median(betweenness8$betweeness)
+sd(betweenness8$betweeness)
+var(betweenness8$betweeness)
+```
+```{r}
+betweenness8%>% slice_max(betweeness)
+betweenness8%>% slice_min(betweeness)
+betweenness8%>% slice_max(betweeness)
+betweenness8 %>% top_n(10) %>% arrange(desc(betweeness))
+betweenness8%>% slice_min(betweeness)
+```
+##### Edge betweenness
+I unfortunately did not find a way to do this in neo4j, as it is not required I will skip it.
+
+##### Normalized vertex betweenness
+
+```{r}
+fraction <- 2/((as.double(order8$nodeCount)-1)*(as.double(order8$nodeCount)-2))
+betweennessnorm8 <- betweenness8
+betweennessnorm8$betweeness<-betweenness8$betweeness*fraction
+betweennessnorm8
+```
+
+
+```{r}
+min(betweennessnorm8$betweeness)
+max(betweennessnorm8$betweeness)
+mean(betweennessnorm8$betweeness)
+median(betweennessnorm8$betweeness)
+sd(betweennessnorm8$betweeness)
+var(betweennessnorm8$betweeness)
+```
+```{r}
+betweennessnorm8%>% slice_max(betweeness)
+betweennessnorm8%>% slice_min(betweeness)
+betweennessnorm8%>% slice_max(betweeness)
+betweennessnorm8 %>% top_n(10) %>% arrange(desc(betweeness))
+betweennessnorm8%>% slice_min(betweeness)
+```
+
+## **d) all-pairs shortest paths (distances), diameter, and average distance**
+```{r}
+#all pairs shortest paths
+sps <- 'CALL gds.alpha.allShortestPaths.stream("asgmt2_season8_undirected")
+        YIELD sourceNodeId, targetNodeId, distance
+        WHERE gds.util.isFinite(distance) = true
+        RETURN gds.util.asNode(sourceNodeId).name AS source,
+               gds.util.asNode(targetNodeId).name AS target,
+               toInteger(distance) as distance
+        ORDER BY distance DESC'  %>% 
+  call_neo4j(con, output="r")
+(sps <- sps %>% bind_cols() %>% setNames(names(sps)))
+
+```
+#### Diameter, Average path length
+```{r}
+#diameter
+max(sps$distance)
+#radius
+min(sps$distance)
+#average
+mean(sps$distance)
+```
+
+## e) **edge connectivity, vertex connectivity**
+Connectivity not available through gds -> creating igraph object.
+```{r}
+G <-"MATCH p=(:Character)-[:interactsWith]-(:Character) RETURN p;" %>% 
+  call_neo4j(con, type = "graph")
+df <- data_frame_from_neo4r(G)
+
+(g_df8 <- igraph::graph_from_data_frame(
+  d = df$relationships, 
+  directed = FALSE, 
+  vertices = df$nodes))
+```
+```{r}
+igraph::edge_connectivity(g_df8)
+#bridges - their removal would increase the number of connected components in the graph
+igraph::bridges(g_df8)
+```
+```{r}
+igraph::components(g_df8 - path("Daenerys", "Aegon"))$no
+igraph::components(g_df8 - path("Brienne", "Catelyn"))$no
+igraph::components(g_df8 - path("Arya", "Owen"))$no
+```
+In order to be able to do comparison with the previous season, we also check connectivity between Jon and Daenerys.
+```{r}
+igraph::edge_connectivity(g_df7, source="JON", target="DAENERYS")
+```
+* **Edge connectivity** is 0 because the graph is already disconnected as we could see in the beginning. However, for the rest of the graph we can still identify bridges that would lead to an increase in a number of components. Therefore, if one of the bridges would be removed the graph would have 3 components. From the serie perspective, the bridges are the interactions that join the whole plot and season together. They join the smaller scenes with the bigger ones. In case, we would delete this bridge and have disconnected graphs we would have a season with more parallel plots that never cross each other. 
+
+Moreover, the connection between JON and DAENERYS is the same as for the previous season. This is a bit suprising, however, it makes sense as these two characters were main ones in both seasons.
+
+#### Vertex connectivity 
+```{r}
+igraph::vertex_connectivity(g_df8)
+#vertices which removal would increase the number of connected components in the graph
+igraph::articulation_points(g_df8)
+```
+* **Vertex connectivity** is also 0, because the graph is disconnected. However, as before we can still identify cut vertices that would lead to an increased number of graph components if removed. In the GOT serie we could theoretically look at them as on the main characters of their smaller "plots" through which the smaller plots mean and result in the main story. 
+
+# Step 7 - interpretation
+
+**Number of edges**
+a)	Edges in the graph represent the connection of vertices in the network. Their number represents how many overall connections we have in the graph. The number of edges also represents the size of the graph.
+b)	In general case, we can use number of edges to define number of connections between stops in a subway stations. In our case the edges are undirected and define character-interaction networks. Specifically, it is the number of distinct interactions in the network. As we do not have multi-edges, the number of these interactions would be represented by the weight. The edge as such specifies with which character did this specific character interacted/occurred in a scene with. The overall number tells us, the total number of relationships in the network.
+c)	Season 7 has 412 edges and season 8 has 553 edges. The overall difference is 141 edges. We can therefore conclude that season 8 either had more characters and thus also more relationships, or the count of characters was similar and then the stories of characters were more intertwined in season 8, or both. According to my knowledge of this show, there was more movements of characters across their “world”, meaning that more characters had a chance to meet/be in scene together/create a relationship.
+
+**Number of vertices**
+a)	The vertex in a graph represents some kind of entity or object, that can have relationship/connection to other vertices. The number of vertices represents the overall number of these entities in the graph. It also defines the order of the graph. 
+b)	In general, we can use vertices for example to define the subway stations in the graph. In our network, the vertices represent the characters in the season. 
+c)	Season 7 has 81 vertices and season 8 has 74 vertices. Thus, we can conclude that more characters were present in season 7 than season 8.  
+
+**Graph density**
+a) The graph density is a ratio of how many edges are in the graph to maximum number of edges in the graph (all vertices connected to all other vertices). It tells us how “far” from being complete the graph is. The measure is between 0-1, where 0 means that there are no edges in the graph and 1 that graph is complete. 
+b) In general, graph density gives us the overview of how well the graph is connected and about how many edges could be still added to the network - how many relationships are missing. In the subway, the density would be quite low as majority of the nodes have degree 2. In our network, the density represents how many relationships out of all possible relationships were formed in the season. For example, for the theatre play, or TV show taking place at one main location and having lower number of characters, I would have much higher density than  GOT.
+c) Graph density of season 7 is 12,7% and of season 8 is 20,5% and thus sparse. The lower density can also mean that we have a lot of side-plots, that connect to the main plot only based on a smaller interactions. Based on previous measures these results were expected, as season 8 has less characters but more relationships between them. Based on my knowledge, this difference might be caused by the fact that majority of the characters meet in the King’s Landing during the war. 
+
+**Maximum degree**
+a)	The maximum degree of a vertex in the graph represents the maximum number of edges incident to a vertex in an undirected graph. It gives an information about the hub in the network. The vertex with the highest degree is a hub of the network, however, if we have low number of vertices with high degree and many with low degree more vertices can be regarded as hub.
+b)	Maximum degree in general can helps us to identify hub of the network. For example, what is the highest number of connections for a subway station, or what is the maximum number of friends a person in a group has. For our network, the maximum degree depicts the highest number of relationships of a character in the network. When we use it to also identify the character with the maximum degree, it tells us which character has the most relationships in the series. 
+c)	Season 7 has maximum degree 43 associated to character JON and season 8 has maximum degree 42 associated to SAM. For season 7 and based on the knowledge of the serie and the location of 3rd IQR I would say that JON, DAENERYS, TYRION, CERSEI are possible hubs. For season 8, I would say that SAM is for sure the hub, but also DAENERYS, TYRION, and ARYA should be considered. It was surprising for me that SAM had the highest degree in season 8, however, he moved to a lot of locations during this time and was in many side-plots of the season 8. In conclusion, the maximum degree of both networks is very similar.
+
+**Minimum degree**
+a)	The minimum degree of a vertex in the graph represents the minimum number of edges incident to a vertex in an undirected graph. It also gives the information about the connectivity of the graph. If we have very high number of vertices with a small degree, we might also assume that density of the graph is low.  
+b)	In general, minimum degree can help us identify the final stations in the subway or the person with the least number of friends in the group (e.g. someone coming to a party where he/she was invited by a friend and knowing only one person). For out network, it represents the lowest amount of interactions that a character in the network had.
+c)	The min degree in both seasons is 1. There is 11 characters with this degree in season 7 and 10 in season 8.  The characters with the minimum degree played only small roles in the season and thus have small number of interactions. However, as we do not know how many times this interaction occurs, it might be that the character appeared in season more times, however, only with the same characters every time.
+
+**Avg. degree** 
+a)	The average degree is the mean of all degrees of vertices in the network,
+b)	The average degree in a network represents the average number of friends or subway connections from a station. For our network, it represents the average number of interactions a character had during the season. 
+c)	The mean for season 7 is 7 and for season 8 it is 14.95. As both networks have approximately the same max and min degree. We can conclude ( also supported by the computed graph) that, in season 7 there was more characters with low degree than in season 8. Additionally, I also computed a median that is 10.17 for season 7 and 11 for season 8. 
+
+**Degree variance**
+a)	The degree variance shows how much are data spread out from the mean (degree).
+b)	Degree variance can be used to identify outliers in the network, such as vertices with very high or very low degree compared to the mean degree. For the network, it can help us identify how spread the interactions are among characters.
+c)	The variance degree for season 7 is 85 and for season 8 it is 169 and thus is much higher for season 8 (almost double). Also comparing mean to the median and that they are not that close, we can conclude that the degrees are not clustered around mean. Based on the analysis, we can state that we have a lot of characters with low degree and smaller number of characters with the high degree. These characters are the main characters of the season.
+
+**Normalized degree centrality**
+I also computed the normalized degree centrality as it allows for better graph comparison because of the varying scale. The findings support the statements from above. 
+
+**Closeness**
+a)	The closeness represents the inverse of the average geodesic distance from one vertex to all other vertices in a graph. As it is inverse, larger the number the smaller the distance. As the graph in season 8 is disconnected, I also used (normalized) harmonic closeness, that eliminates the problem of the closeness being Inf. I used the normalzied version as it  is better for a graph comparison. However, igraph does this a bit differently so this situation did not occur, and rather takes disconnected graphs as two separate ones.
+b)	The closeness can be used to determine a subway station that has the shortest connections to all the other ones. Specifically, we can then conclude that the station with the highest closeness is well connected. For our network, it represents how fast a character can get on average to all other characters based on the shortest possible path. 
+c)	In season 7 the min closeness is 0.0034 for HOWLAND, what means that this character is placed the furthest away from all the others, as the sum of the shortest paths Is big. The Max closeness is 0.0082 for JON, meaning that he is on average the closest to all the other vertices. Mean closeness is 0.0054. From this we might read that characters in general are not closely connected/linked to each other. In connection to previous section, we might conclude that as a lot of characters have a low degree in a network the sum of all shortest geodesic paths is thus longer. 
+For season 8 the min closeness is 0.267 and attributed to WILLIAM, the max closeness is 1 attributed to Petyr and Ramsay and mean closeness is 0.518. The closeness of Petyr and Ramsay is 1 because these two vertices are the only vertices in the second component of the graph, thus the interpretation is misleading. 
+
+Therefore, I will do more specific comparison using the *normalized harmonic closeness*. For season 7, the max closeness is 0.76 again attributed to JON, the min closeness is 0.29 attributed again to HOWLAND and mean closeness is 0.48.  For season 8, the max closeness is 0.76 attributed to SAM, min closeness is 0.0136 and attributed to Petyr and Ramsay, which had closeness 1 before. The mean closeness is 0.535. The max closeness is the same for both seasons. However, min closeness drifts quire a lot, this is because of the small closeness of the Petyr and Ramsay vertices. However, when we look at the character with the 3rd lowest closeness, his value is 0.28. Thus, very close to the season 7 minimal value. In general, the characters with high closeness have a high importance in the season. The characters with the low closeness, are only side characters. The closeness is usually very closely linked to identifying hubs inthe graph as well. 
+
+**Betweenness**
+a)	Betweenness centrality measures the number of shortest paths in the graph that pass through this vertex. The high betweenness centrality means that the vertex is important for information sharing/delivery/flow within the network. For the better network comparison and because of the disconnected graph in season 8, I also computed normalized betweenness centrality. 
+b)	The high betweenness centrality of vertex indicates that this vertex will be passed by often. Such vertex acts as the fastest link from station 1 to station 2. For our network, it represents the link between different plots or the “place” where many of the plots collide together. In case such vertex would be deleted from a network, we might lose a lot of information about how different sub-plots intertwine.
+c)	Season 7: The max betweenness is 750 and is attributed to JON. Thus the JON is in the center of graph and has the biggest influence on information delivery, in other words if you would like to send a letter to someone in this season, give it to JON. The min betweenness is 0 and is attributed to multiple characters.  This means that no shortest path passes through them. If we look fastly over the list, these are mostly the characters that have degree 1, leaf nodes. The mean betweenness is 54.8. and median is 3.7. This indicates that we have a few vertices with very high betweenness and many vertices with very low one. Specifically, 50% of our data have betweenness below 3.7, meaning that half of our data does not have more than 3.7 paths going through it. For normalized betweenness the values are min=0, max=0.237, average = 0.0173, and median = 0.001.
+For season 8: For the betweenness we have min=0, max=351.89, mean=36.75. When looking over the normalized betweenness we have min of 0 attributed to 32 characters. Maximum of 0.13 attributed to Danaerys, what makes sense as she was one of the main characters in season 8, that also travelled a lot and was only one that could communicate with her army. Thus, for example even Jon had to go through her to communicate to them (I really hope I do not remember this wrong). The mean is 0.014. 
+In comparison, the maximum of normalized centrality is almost double for the season 7. However, the means are very close together. 
+
+
+**All-pairs shortest paths (distances), diameter, average distance**
+a)	The shortest path is the shortest distance between two vertices in the graph, in our case it is the path with the lowest number of edges (unweighted). The all-pairs shortest path is the matrix with the shortest paths between any two vertices in the graph. The longest path out of all shortest paths is called diameter.  The average distance or average path length is computed out of all shortest paths in the graph. 
+b)	In general, the shortest path is the quickest route from one vertex to the other. It is the closest connection between any two characters in the season. The vertices that are closely linked have the smallest distance between each other. For example, in the friendship network this represents how many people should a person talk to get an information to someone else the fastest. For our network, it indicates the distance between the characters. The characters interacting together the most have the shortest distance between themselves. The longest out of these shortest paths is the diameter. These are the characters for which it would take the longest to share an information between each other. It is the worst-case scenario of the time of “message” delivering in the graph. Average path is the average shortest distance, it represents on average to how many characters the information has to be passed to in order to be received by any other character in the graph.   
+c)	In season 7 the diameter is 5 and in season 8 it is 6. It means that the longest shortest path between two characters is 5 or 6. Average path length for season 7 is 2.37 and for season 8 it is 2.06, that is much lower than radius in both seasons. It means that on average 2.37/2.06 steps along the shortest paths must be made to reach the other vertices/characters. In season 8 we have less characters but more relationships, and the graph has also higher density. However, as the diameter is bigger, we can conclude that there are some characters that are further apart and probably part of side plots.  
+
+**Edge connectivity and  vertex connectivity**
+a)	The edge connectivity is the size of the smallest edge cut. Edge cut is the number of edges that need to be deleted for the graph to become disconnected. The vertex connectivity is on the other hand the size of the smallest vertex cut. Vertex cut is the number of vertices that need to be deleted for the graph to become disconnected. We can then say that graph is k-edge-connected or k-vertex-connected.
+b)	In general, the connectivity of the graph can show the robustness of the graph and thus also how robust is the graph against attacks. In the subway graph, if one vertex would be removed because of the station malfunction, would the network become disconnected or does there exist an alternative path/edge. In our network, it can show what happens if e.g. one character disappears and how this affects the flow of information or plot of the season. It might happen that when the character interaction network has more components, we might be looking at multiple parallel plots that never cross each other – characters never meet. 
+c)	For season 7 the edge and vertex connectivity are 1. For season 8, the edge and vertex connectivity are 0, because the graph is disconnected. However, thanks to igraph we can still find bridges and articulation points that would cause for the network to have more components (as stated in documentation). Thus, for the graph to have 3 components, it is enough if bridge or articulation point is removed. Season 7 has 11 bridges and 9 articulation points. Season 8 has 10 bridges and 8 articulation points. We can thus conclude that graph of season 7 is more robust. 
+
+
